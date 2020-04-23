@@ -2,26 +2,28 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/google/subcommands"
 )
 
 type pciDevice struct {
-	addr   string
-	vendor string
-	id     string
-	driver string
+	addr           string
+	vendor         string
+	id             string
+	driver         string
 	originalDriver string
 }
 
 func devDriver(addr string) (string, error) {
-	name, err := os.Readlink("/sys/bus/pci/devices/"+addr+"/driver")
+	name, err := os.Readlink("/sys/bus/pci/devices/" + addr + "/driver")
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	} else if err != nil {
@@ -85,7 +87,7 @@ func unbindDev(dev *pciDevice) error {
 	if dev.driver == "" {
 		return nil
 	}
-	unbind, err := os.OpenFile("/sys/bus/pci/devices/" + dev.addr + "/driver/unbind", os.O_WRONLY, 0)
+	unbind, err := os.OpenFile("/sys/bus/pci/devices/"+dev.addr+"/driver/unbind", os.O_WRONLY, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -168,7 +170,7 @@ func vfioBind(group []*pciDevice) error {
 }
 
 func removeDevice(device *pciDevice) error {
-	remove, err := os.OpenFile("/sys/bus/pci/devices/" + device.addr + "/remove", os.O_WRONLY, 0)
+	remove, err := os.OpenFile("/sys/bus/pci/devices/"+device.addr+"/remove", os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
@@ -263,7 +265,7 @@ func checkSafety(group []*pciDevice) bool {
 	return true
 }
 
-func iommuGroup(dev *pciDevice) ([]*pciDevice, error) {
+func devIommuGroup(dev *pciDevice) ([]*pciDevice, error) {
 	var ret []*pciDevice
 
 	ret = append(ret, dev)
@@ -330,66 +332,109 @@ func devFromAddr(addr string) (*pciDevice, error) {
 	return newPCIDevice(addr)
 }
 
-var (
-	group = flag.Bool("group", false, "On reset, remove and rescan each argument's IOMMU group (non-bridge devices only) if true.\nOtherwise only the arguments themselves.")
-)
-
-func main() {
-	flag.Parse()
-
-	args := flag.Args()
-	logger := log.New(os.Stderr, os.Args[0]+": ", 0)
-
-	if len(args) < 1 {
-		logger.Fatalf("%s [PCI addr | (PCI vendor:PCI device) | network interface]\n", os.Args[0])
-	}
-
-	// TODO remove ugliness and use subcommands package
-	var arg string
-	if args[0] == "reset" {
-		arg = args[1]
-	} else {
-		arg = args[0]
-	}
-
+func parseDevice(arg string) (*pciDevice, error) {
 	var device *pciDevice
 	var err error
 
 	if device, err = devFromAddr(arg); err != nil {
-		logger.Fatal(err)
+		return nil, err
 	}
 	if device == nil {
 		if device, err = devFromID(arg); err != nil {
-			logger.Fatal(err)
+			return nil, err
 		}
 	}
 	if device == nil {
 		if device, err = devFromInterface(arg); err != nil {
-			logger.Fatal(err)
+			return nil, err
 		}
 	}
 	if device == nil {
-		logger.Fatalf("Could not parse %s Please give one of:\n"+
-			"\tPCI Address (e.g. 0000:01:00.1)\n"+
-			"\tPCI vendor/device pair (e.g. 1022:145f)\n"+
-			"\tNetwork Interface (e.g. eth0)\n", arg)
+		return nil, fmt.Errorf("could not parse device %s", arg)
 	}
+	return device, nil
+}
 
-	var group []*pciDevice
-	if group, err = iommuGroup(device); err != nil {
-		logger.Fatal(err)
+func iommuGroup(dev string) ([]*pciDevice, error) {
+	device, err := parseDevice(dev)
+	if err != nil {
+		return nil, err
 	}
+	return devIommuGroup(device)
+}
 
-	if args[0] == "reset" {
-		if err = resetGroup(group); err != nil {
-			logger.Fatal(err)
-		}
-		os.Exit(0)
+var deviceFmtDesc = "\tPCI Address (e.g. 0000:01:00.1)\n" +
+	"\tPCI vendor/device pair (e.g. 1022:145f)\n" +
+	"\tNetwork Interface (e.g. eth0)\n"
+
+type bindCmd struct{}
+
+func (*bindCmd) Name() string     { return "bind" }
+func (*bindCmd) Synopsis() string { return "Bind a PCI device's IOMMU group to the VFIO driver" }
+func (*bindCmd) Usage() string {
+	return fmt.Sprintf("bind [device]\nWhere [device] is one of:\n%s\n", deviceFmtDesc)
+}
+
+func (*bindCmd) SetFlags(*flag.FlagSet) {}
+
+func (b *bindCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if f.NArg() < 1 {
+		fmt.Fprintf(os.Stderr, "%s", b.Usage())
+		return subcommands.ExitUsageError
+	}
+	group, err := iommuGroup(f.Args()[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return subcommands.ExitFailure
 	}
 	if !checkSafety(group) {
-		os.Exit(0)
+		return subcommands.ExitSuccess
 	}
 	if err = vfioBind(group); err != nil {
-		logger.Fatal(err)
+		fmt.Fprintln(os.Stderr, err)
+		return subcommands.ExitFailure
 	}
+	return subcommands.ExitSuccess
+}
+
+type resetCmd struct {
+	group bool
+}
+
+func (*resetCmd) Name() string     { return "reset" }
+func (*resetCmd) Synopsis() string { return "Remove PCI devices and issue a rescan" }
+func (*resetCmd) Usage() string {
+	return fmt.Sprintf("reset [--group] [device]\nWhere [device] is one of:\n%s\n", deviceFmtDesc)
+}
+func (r *resetCmd) SetFlags(f *flag.FlagSet) {
+	f.BoolVar(&r.group, "group", false,
+		"On reset, remove and rescan each argument's IOMMU group\n(non-bridge devices only) if true. Otherwise only the\narguments themselves.")
+}
+
+func (r *resetCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
+	if f.NArg() < 1 {
+		fmt.Println("ENOTSUPP.. TODO..")
+		return subcommands.ExitSuccess
+	}
+	group, err := iommuGroup(f.Args()[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return subcommands.ExitFailure
+	}
+	if err = resetGroup(group); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return subcommands.ExitFailure
+	}
+	return subcommands.ExitSuccess
+}
+
+func main() {
+	subcommands.Register(subcommands.HelpCommand(), "")
+	subcommands.Register(subcommands.FlagsCommand(), "")
+	subcommands.Register(subcommands.CommandsCommand(), "")
+	subcommands.Register(&bindCmd{}, "")
+	subcommands.Register(&resetCmd{}, "")
+
+	flag.Parse()
+	os.Exit(int(subcommands.Execute(context.Background())))
 }
