@@ -235,7 +235,11 @@ func reset(group []*pciDevice) error {
 	if !tryRescan {
 		return err
 	}
-	return rescan()
+	e := rescan()
+	if err != nil {
+		return err
+	}
+	return e
 }
 
 func isEndpoint(addr string) (bool, error) {
