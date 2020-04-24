@@ -197,7 +197,7 @@ func rescan() error {
 	return r.Close()
 }
 
-func resetGroup(group []*pciDevice) error {
+func reset(group []*pciDevice) error {
 	var err error
 	var tryRescan bool
 	for _, dev := range group {
@@ -410,7 +410,7 @@ func devFromInterface(ifc string) (*pciDevice, error) {
 
 var vidRE = regexp.MustCompile(`^(?:0x)?([0-9a-f]{4}):(?:0x)?([0-9a-f]{4})$`)
 
-func devFromID(vid string) (*pciDevice, error) {
+func devsFromID(vid string) ([]*pciDevice, error) {
 	s := vidRE.FindStringSubmatch(vid)
 	if s == nil {
 		return nil, nil
@@ -432,6 +432,7 @@ func devFromID(vid string) (*pciDevice, error) {
 	if err != nil {
 		return nil, err
 	}
+	var ret []*pciDevice
 	for _, d := range dents {
 		v, err := readString("/sys/bus/pci/devices/" + d.Name() + "/vendor")
 		if errors.Is(err, os.ErrNotExist) {
@@ -459,14 +460,17 @@ func devFromID(vid string) (*pciDevice, error) {
 		if dv != device {
 			continue
 		}
-		ret := &pciDevice{addr: d.Name(), vendor: v, id: dev}
-		if err = devRecordDriver(ret); err != nil {
+		match := &pciDevice{addr: d.Name(), vendor: v, id: dev}
+		if err = devRecordDriver(match); err != nil {
 			return nil, err
 		}
-		ret.originalDriver = ret.driver
-		return ret, nil
+		match.originalDriver = match.driver
+		ret = append(ret, match)
 	}
-	return nil, fmt.Errorf("vendor/device pair %s not found", vid)
+	if ret == nil {
+		return nil, fmt.Errorf("vendor/device pair %s not found", vid)
+	}
+	return ret, nil
 }
 
 var addrRE = regexp.MustCompile(`^([0-9a-fA-F]{4}):([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.([0-7])$`)
@@ -496,40 +500,59 @@ func devFromAddr(addr string) (*pciDevice, error) {
 }
 
 func execute(f func ([]*pciDevice) error, arg string, wholeGroup bool) subcommands.ExitStatus{
-	var device *pciDevice
-	var group []*pciDevice
+	devices := make([]*pciDevice, 1)
+	var groups []*pciDevice
 	var err error
 
-	if device, err = devFromAddr(arg); err != nil {
+	if devices[0], err = devFromAddr(arg); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return subcommands.ExitFailure
 	}
-	if device == nil {
-		if device, err = devFromID(arg); err != nil {
+	if devices[0] == nil {
+		var devs []*pciDevice
+		if devs, err = devsFromID(arg); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return subcommands.ExitFailure
+		}
+		if devs != nil {
+			devices = devs
+		}
+	}
+	if devices[0] == nil {
+		if devices[0], err = devFromInterface(arg); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return subcommands.ExitFailure
 		}
 	}
-	if device == nil {
-		if device, err = devFromInterface(arg); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return subcommands.ExitFailure
-		}
-	}
-	if device == nil {
+	if devices[0] == nil {
 		fmt.Fprintf(os.Stderr, "Could not parse device %s.\n", arg)
 		return subcommands.ExitFailure
 	}
 	if wholeGroup {
-		group, err = iommuGroup(device)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return subcommands.ExitFailure
+		var g []*pciDevice
+		contains := func(dev *pciDevice, group []*pciDevice) bool {
+			for _, d := range group {
+				if d.addr == dev.addr {
+					return true
+				}
+			}
+			return false
+		}
+		for _, device := range devices {
+			if contains(device, groups) {
+				continue
+			}
+			g, err = iommuGroup(device)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return subcommands.ExitFailure
+			}
+			groups = append(groups, g...)
 		}
 	} else {
-		group = []*pciDevice{device}
+		groups = devices
 	}
-	safe, err := checkSafety(group)
+	safe, err := checkSafety(groups)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return subcommands.ExitFailure
@@ -537,7 +560,7 @@ func execute(f func ([]*pciDevice) error, arg string, wholeGroup bool) subcomman
 	if !safe {
 		return subcommands.ExitSuccess
 	}
-	if err = f(group); err != nil {
+	if err = f(groups); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return subcommands.ExitFailure
 	}
@@ -585,7 +608,7 @@ func (r *resetCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{})
 		fmt.Fprintf(os.Stderr, "%s", r.Usage())
 		return subcommands.ExitUsageError
 	}
-	return execute(resetGroup, f.Args()[0], r.wholeGroup)
+	return execute(reset, f.Args()[0], r.wholeGroup)
 }
 
 func main() {
