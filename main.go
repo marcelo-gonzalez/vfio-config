@@ -325,7 +325,7 @@ func checkSafety(group []*pciDevice) (bool, error) {
 	if err = block.Close(); err != nil {
 		return false, err
 	}
-	wouldNuke := make(map[string]string)
+	wouldNuke := make(map[string][]string)
 	for _, dent := range dents {
 		if _, ok := devMounts[dent.Name()]; !ok {
 			continue
@@ -338,7 +338,13 @@ func checkSafety(group []*pciDevice) (bool, error) {
 		for _, c := range t {
 			for _, dev := range group {
 				if dev.addr == c {
-					wouldNuke[dev.addr] = dent.Name()
+					s := wouldNuke[dev.addr]
+					if s == nil {
+						wouldNuke[dev.addr] = []string{dent.Name()}
+					} else {
+						s = append(s, dent.Name())
+						wouldNuke[dev.addr] = s
+					}
 				}
 			}
 		}
@@ -349,7 +355,9 @@ func checkSafety(group []*pciDevice) (bool, error) {
 
 	fmt.Println("The following devices would be unbound, but are backing a mount:\n")
 	for k, v := range wouldNuke {
-		fmt.Printf("%s => %s\n", k, devMounts[v])
+		for _, dev := range v {
+			fmt.Printf("%s => %s\n", k, devMounts[dev])
+		}
 	}
 	fmt.Println("\nYou probably don't want to do that. Continue anyway [yes/no]?")
 	s := bufio.NewScanner(os.Stdin)
