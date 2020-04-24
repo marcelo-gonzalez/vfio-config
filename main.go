@@ -413,7 +413,7 @@ func devFromInterface(ifc string) (*pciDevice, error) {
 	}
 	p := strings.Split(d, "/")
 	fmt.Printf("%s => %s\n", ifc, p[len(p)-1])
-	return devFromAddr(p[len(p)-1])
+	return newPCIDevice(p[len(p)-1])
 }
 
 var vidRE = regexp.MustCompile(`^(?:0x)?([0-9a-f]{4}):(?:0x)?([0-9a-f]{4})$`)
@@ -599,15 +599,14 @@ func execute(f func ([]*pciDevice) error, args []string, wholeGroup bool) subcom
 
 var deviceFmtDesc = "Where each [device] is one of:\n"+
 	"\tPCI Address (e.g. 0000:01:00.1)\n" +
-	"\tPCI vendor/device pair (e.g. 1022:145f)\n" +
-	"\tNetwork Interface (e.g. eth0)\n"
+	"\tPCI vendor/device pair (e.g. 1022:145f)\n"
 
 type bindCmd struct{}
 
 func (*bindCmd) Name() string     { return "bind" }
 func (*bindCmd) Synopsis() string { return "Bind a PCI device's IOMMU group to the VFIO driver" }
 func (*bindCmd) Usage() string {
-	return fmt.Sprintf("bind [devices...]\n%s", deviceFmtDesc)
+	return fmt.Sprintf("bind [devices...]\n%s\tNetwork Interface (e.g. eth0)\n", deviceFmtDesc)
 }
 
 func (*bindCmd) SetFlags(*flag.FlagSet) {}
