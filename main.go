@@ -456,7 +456,7 @@ type bindCmd struct{}
 func (*bindCmd) Name() string     { return "bind" }
 func (*bindCmd) Synopsis() string { return "Bind a PCI device's IOMMU group to the VFIO driver" }
 func (*bindCmd) Usage() string {
-	return fmt.Sprintf("bind [device]\nWhere [device] is one of:\n%s\n", deviceFmtDesc)
+	return fmt.Sprintf("bind [device]\nWhere [device] is one of:\n%s", deviceFmtDesc)
 }
 
 func (*bindCmd) SetFlags(*flag.FlagSet) {}
@@ -493,16 +493,16 @@ type resetCmd struct {
 func (*resetCmd) Name() string     { return "reset" }
 func (*resetCmd) Synopsis() string { return "Remove PCI devices and issue a rescan" }
 func (*resetCmd) Usage() string {
-	return fmt.Sprintf("reset [--group] [device]\nWhere [device] is one of:\n%s\n", deviceFmtDesc)
+	return fmt.Sprintf("reset [--group] [device]\nWhere [device] is one of:\n%s", deviceFmtDesc)
 }
 func (r *resetCmd) SetFlags(f *flag.FlagSet) {
 	f.BoolVar(&r.group, "group", false,
-		"On reset, remove and rescan each argument's IOMMU group\n(non-bridge devices only) if true. Otherwise only the\narguments themselves.")
+		"On reset, remove and rescan whole IOMMU group\n(non-bridge devices only) if true. Otherwise\nonly the specified device.")
 }
 
 func (r *resetCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if f.NArg() < 1 {
-		fmt.Println("ENOTSUPP.. TODO..")
+		fmt.Fprintf(os.Stderr, "%s", r.Usage())
 		return subcommands.ExitSuccess
 	}
 	group, err := iommuGroup(f.Args()[0])
