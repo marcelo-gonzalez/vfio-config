@@ -1,0 +1,37 @@
+Tool to help bind a PCI device and its IOMMU group to the VFIO driver.
+
+For example, to bind the PCI device backing a network interface to the
+VFIO driver for use in a VM via passthrough:
+
+# ip link
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000
+    link/ether 01:02:03:04:05:06 brd ff:ff:ff:ff:ff:ff
+#
+# su
+# modprobe vfio-pci
+# vfio-config bind eth0
+eth0 => 0000:05:00.0
+0000:05:00.0 now bound to vfio-pci
+0000:08:00.0 now bound to vfio-pci
+0000:01:00.0 now bound to vfio-pci
+0000:06:00.0 now bound to vfio-pci
+0000:01:00.1 now bound to vfio-pci
+
+
+Now passthrough should be possible:
+
+# qemu-system-x86_64 -enable-kvm -hda ~/my.img -kernel ~/linux/arch/x86/boot/bzImage \
+  -append "root=/dev/foo rw" -device vfio-pci,host=05:00.0 -nic none
+
+To reset the group just bound:
+
+# vfio-config reset --group 0000:05:00.0
+Removed 0000:05:00.0
+Removed 0000:08:00.0
+Removed 0000:01:00.0
+Removed 0000:06:00.0
+Removed 0000:01:00.1
+Issued PCI bus rescan
+
