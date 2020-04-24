@@ -252,11 +252,11 @@ func newPCIDevice(addr string) (*pciDevice, error) {
 	var err error
 	ret := &pciDevice{addr: addr}
 
-	ret.vendor, err = readString("/sys/bus/pci/devices/"+addr+"/vendor")
+	ret.vendor, err = readString("/sys/bus/pci/devices/" + addr + "/vendor")
 	if err != nil {
 		return nil, err
 	}
-	ret.id, err = readString("/sys/bus/pci/devices/"+addr+"/device")
+	ret.id, err = readString("/sys/bus/pci/devices/" + addr + "/device")
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +508,7 @@ func devFromAddr(addr string) (*pciDevice, error) {
 	return newPCIDevice(addr)
 }
 
-func execute(f func ([]*pciDevice) error, args []string, wholeGroup bool) subcommands.ExitStatus {
+func execute(f func([]*pciDevice) error, args []string, wholeGroup bool) subcommands.ExitStatus {
 	devices := make([]*pciDevice, 0, len(args))
 	var err error
 
@@ -597,7 +597,7 @@ func execute(f func ([]*pciDevice) error, args []string, wholeGroup bool) subcom
 	return subcommands.ExitSuccess
 }
 
-var deviceFmtDesc = "Where each [device] is one of:\n"+
+var deviceFmtDesc = "Where each [device] is one of:\n" +
 	"\tPCI Address (e.g. 0000:01:00.1)\n" +
 	"\tPCI vendor/device pair (e.g. 1022:145f)\n"
 
