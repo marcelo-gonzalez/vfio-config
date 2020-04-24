@@ -212,17 +212,6 @@ func resetGroup(group []*pciDevice) error {
 	return rescan()
 }
 
-func resetDevice(arg string) error {
-	dev, err := parseDevice(arg)
-	if err != nil {
-		return err
-	}
-	if err = removeDevice(dev); err != nil {
-		return err
-	}
-	return rescan()
-}
-
 func isEndpoint(addr string) (bool, error) {
 	config, err := os.Open("/sys/bus/pci/devices/" + addr + "/config")
 	if err != nil {
@@ -537,6 +526,22 @@ func iommuGroup(dev string) ([]*pciDevice, error) {
 	return devIommuGroup(device)
 }
 
+func execute(f func ([]*pciDevice) error, group []*pciDevice) subcommands.ExitStatus{
+	safe, err := checkSafety(group)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return subcommands.ExitFailure
+	}
+	if !safe {
+		return subcommands.ExitSuccess
+	}
+	if err = f(group); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return subcommands.ExitFailure
+	}
+	return subcommands.ExitSuccess
+}
+
 var deviceFmtDesc = "\tPCI Address (e.g. 0000:01:00.1)\n" +
 	"\tPCI vendor/device pair (e.g. 1022:145f)\n" +
 	"\tNetwork Interface (e.g. eth0)\n"
@@ -561,19 +566,7 @@ func (b *bindCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) 
 		fmt.Fprintln(os.Stderr, err)
 		return subcommands.ExitFailure
 	}
-	safe, err := checkSafety(group)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return subcommands.ExitFailure
-	}
-	if !safe {
-		return subcommands.ExitSuccess
-	}
-	if err = vfioBind(group); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return subcommands.ExitFailure
-	}
-	return subcommands.ExitSuccess
+	return execute(vfioBind, group)
 }
 
 type resetCmd struct {
@@ -593,25 +586,24 @@ func (r *resetCmd) SetFlags(f *flag.FlagSet) {
 func (r *resetCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) subcommands.ExitStatus {
 	if f.NArg() < 1 {
 		fmt.Fprintf(os.Stderr, "%s", r.Usage())
-		return subcommands.ExitSuccess
+		return subcommands.ExitUsageError
 	}
+	var group []*pciDevice
+	var err error
 	if r.group {
-		group, err := iommuGroup(f.Args()[0])
+		group, err = iommuGroup(f.Args()[0])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return subcommands.ExitFailure
 		}
-		if err = resetGroup(group); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return subcommands.ExitFailure
-		}
 	} else {
-		if err := resetDevice(f.Args()[0]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		dev, err := parseDevice(f.Args()[0])
+		if err != nil {
 			return subcommands.ExitFailure
 		}
+		group = []*pciDevice{dev}
 	}
-	return subcommands.ExitSuccess
+	return execute(resetGroup, group)
 }
 
 func main() {
