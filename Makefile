@@ -1,11 +1,18 @@
 GO := go
 
-.PHONY: fmt clean
+.PHONY: fmt clean build install uninstall
 
-vfio-config: | fmt 
+build: | fmt
 	$(GO) build
 
+install: | build
+	$(GO) get
+
+uninstall:
+	$(GO) clean -i
+
 fmt:
-	go fmt
+	$(GO) fmt
+
 clean:
 	rm vfio-config
