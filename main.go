@@ -6,7 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -260,9 +262,91 @@ func newPCIDevice(addr string) (*pciDevice, error) {
 	return ret, nil
 }
 
-func checkSafety(group []*pciDevice) bool {
-	// TODO
-	return true
+func checkSafety(group []*pciDevice) (bool, error) {
+	devMounts := make(map[string]string)
+	mounts, err := os.Open("/proc/mounts")
+	if err != nil {
+		return false, err
+	}
+	r := bufio.NewReader(mounts)
+	for {
+		m, err := r.ReadString('\n')
+		if errors.Is(err, io.EOF) {
+			if err = mounts.Close(); err != nil {
+				return false, err
+			}
+			break
+		}
+		if err != nil {
+			mounts.Close()
+			return false, err
+		}
+		f := strings.Fields(m)
+		d := strings.Split(f[0], "/")
+		if len(d) < 3 {
+			continue
+		}
+		if d[1] != "dev" {
+			continue
+		}
+		if len(f) < 2 {
+			devMounts[d[2]] = "<mount unkown?>"
+		} else {
+			devMounts[d[2]] = f[1]
+		}
+	}
+
+	// Is it true that /dev/foo will always appear as
+	// foo in /sys/class/block ? Maybe no... should check
+	block, err := os.Open("/sys/class/block")
+	if err != nil {
+		return false, err
+	}
+	dents, err := block.Readdir(-1)
+	if err != nil {
+		block.Close()
+		return false, err
+	}
+	if err = block.Close(); err != nil {
+		return false, err
+	}
+	wouldNuke := make(map[string]string)
+	for _, dent := range dents {
+		if _, ok := devMounts[dent.Name()]; !ok {
+			continue
+		}
+		path, err := filepath.EvalSymlinks("/sys/class/block/" + dent.Name())
+		if err != nil {
+			return false, err
+		}
+		t := strings.Split(path, "/")
+		for _, c := range t {
+			for _, dev := range group {
+				if dev.addr == c {
+					wouldNuke[dev.addr] = dent.Name()
+				}
+			}
+		}
+	}
+	if len(wouldNuke) == 0 {
+		return true, nil
+	}
+
+	fmt.Println("The following devices would be unbound, but are backing a mount:\n")
+	for k, v := range wouldNuke {
+		fmt.Printf("%s => %s\n", k, devMounts[v])
+	}
+	fmt.Println("\nYou probably don't want to do that. Continue anyway [yes/no]?")
+	s := bufio.NewScanner(os.Stdin)
+	for s.Scan() {
+		if s.Text() != "yes" && s.Text() != "no" {
+			fmt.Println("Please say \"yes\" or \"no\"")
+			continue
+		}
+		return s.Text() == "yes", nil
+	}
+	// TODO: think of other dangerous stuff
+	return false, nil
 }
 
 func devIommuGroup(dev *pciDevice) ([]*pciDevice, error) {
@@ -387,7 +471,12 @@ func (b *bindCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{}) 
 		fmt.Fprintln(os.Stderr, err)
 		return subcommands.ExitFailure
 	}
-	if !checkSafety(group) {
+	safe, err := checkSafety(group)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return subcommands.ExitFailure
+	}
+	if !safe {
 		return subcommands.ExitSuccess
 	}
 	if err = vfioBind(group); err != nil {
