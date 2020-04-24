@@ -1,4 +1,4 @@
-module github.com/marcelo-gonzalez/vfio-bind
+module github.com/marcelo-gonzalez/vfio-config
 
 go 1.14
 
