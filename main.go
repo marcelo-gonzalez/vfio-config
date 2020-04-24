@@ -73,6 +73,7 @@ func bindDev(dev *pciDevice, driver string) error {
 		}
 		return fmt.Errorf("binding %s to %s failed. Currently %s", dev.addr, driver, msg)
 	}
+	fmt.Printf("Bound %s to %s\n", dev.addr, dev.driver)
 	return nil
 }
 
@@ -146,6 +147,7 @@ func vfioBindDevice(dev *pciDevice) error {
 		return err
 	}
 	if dev.driver == "vfio-pci" {
+		fmt.Printf("%s now bound to vfio-pci\n", dev.addr)
 		return nil
 	}
 	if dev.driver != "" {
@@ -182,6 +184,7 @@ func removeDevice(device *pciDevice) error {
 		remove.Close()
 		return err
 	}
+	fmt.Printf("Removed %s\n", device.addr)
 	return remove.Close()
 }
 
@@ -194,7 +197,11 @@ func rescan() error {
 		r.Close()
 		return err
 	}
-	return r.Close()
+	if err = r.Close(); err != nil {
+		return err
+	}
+	fmt.Println("Issued PCI bus rescan")
+	return nil
 }
 
 func reset(group []*pciDevice) error {
@@ -405,6 +412,7 @@ func devFromInterface(ifc string) (*pciDevice, error) {
 		return nil, err
 	}
 	p := strings.Split(d, "/")
+	fmt.Printf("%s => %s\n", ifc, p[len(p)-1])
 	return devFromAddr(p[len(p)-1])
 }
 
@@ -460,6 +468,7 @@ func devsFromID(vid string) ([]*pciDevice, error) {
 		if dv != device {
 			continue
 		}
+		fmt.Printf("%s => %s\n", vid, d.Name())
 		match := &pciDevice{addr: d.Name(), vendor: v, id: dev}
 		if err = devRecordDriver(match); err != nil {
 			return nil, err
