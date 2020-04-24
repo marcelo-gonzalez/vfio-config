@@ -24,16 +24,18 @@ type pciDevice struct {
 	originalDriver string
 }
 
-func devDriver(addr string) (string, error) {
-	name, err := os.Readlink("/sys/bus/pci/devices/" + addr + "/driver")
+func devRecordDriver(dev *pciDevice) error {
+	name, err := os.Readlink("/sys/bus/pci/devices/" + dev.addr + "/driver")
 	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	} else if err != nil {
-		return "", err
-	} else {
-		p := strings.Split(name, "/")
-		return p[len(p)-1], nil
+		dev.driver = ""
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	p := strings.Split(name, "/")
+	dev.driver = p[len(p)-1]
+	return nil
 }
 
 func bindDev(dev *pciDevice, driver string) error {
@@ -59,8 +61,7 @@ func bindDev(dev *pciDevice, driver string) error {
 	if err = bind.Close(); err != nil {
 		return err
 	}
-	dev.driver, err = devDriver(dev.addr)
-	if err != nil {
+	if err = devRecordDriver(dev); err != nil {
 		return err
 	}
 	if dev.driver != driver {
@@ -140,7 +141,7 @@ func vfioBindDevice(dev *pciDevice) error {
 		return err
 	}
 
-	if dev.driver, err = devDriver(dev.addr); err != nil {
+	if err = devRecordDriver(dev); err != nil {
 		bindOriginalDriver(dev)
 		return err
 	}
@@ -269,7 +270,7 @@ func newPCIDevice(addr string) (*pciDevice, error) {
 		return nil, err
 	}
 
-	if ret.driver, err = devDriver(ret.addr); err != nil {
+	if err = devRecordDriver(ret); err != nil {
 		return nil, err
 	}
 	ret.originalDriver = ret.driver
