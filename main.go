@@ -235,8 +235,7 @@ func isEndpoint(addr string) (bool, error) {
 		config.Close()
 		return false, err
 	}
-	ret := headerType[0]&0x7f == 0
-	return ret, config.Close()
+	return headerType[0]&0x7f == 0, config.Close()
 }
 
 func newPCIDevice(addr string) (*pciDevice, error) {
@@ -305,7 +304,7 @@ func checkSafety(group []*pciDevice) (bool, error) {
 			continue
 		}
 		if len(f) < 2 {
-			devMounts[d[2]] = "<mount unkown?>"
+			devMounts[d[2]] = "<mountpoint unknown?>"
 		} else {
 			devMounts[d[2]] = f[1]
 		}
@@ -405,8 +404,23 @@ func devIommuGroup(dev *pciDevice) ([]*pciDevice, error) {
 	return ret, group.Close()
 }
 
-func devFromInterface(id string) (*pciDevice, error) {
-	return nil, nil
+func devFromInterface(ifc string) (*pciDevice, error) {
+	if _, err := os.Stat("/sys/class/net/" + ifc); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat("/sys/class/net/" + ifc + "/device"); errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s doesn't seem to be backed by a real device", ifc)
+	} else if err != nil {
+		return nil, err
+	}
+	d, err := os.Readlink("/sys/class/net/" + ifc + "/device")
+	if err != nil {
+		return nil, err
+	}
+	p := strings.Split(d, "/")
+	return devFromAddr(p[len(p)-1])
 }
 
 func devFromID(id string) (*pciDevice, error) {
