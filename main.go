@@ -184,6 +184,18 @@ func removeDevice(device *pciDevice) error {
 	return remove.Close()
 }
 
+func rescan() error {
+	r, err := os.OpenFile("/sys/bus/pci/rescan", os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	if _, err = r.Write([]byte{'1'}); err != nil {
+		r.Close()
+		return err
+	}
+	return r.Close()
+}
+
 func resetGroup(group []*pciDevice) error {
 	var err error
 	var tryRescan bool
@@ -196,16 +208,18 @@ func resetGroup(group []*pciDevice) error {
 	if !tryRescan {
 		return err
 	}
+	return rescan()
+}
 
-	rescan, err := os.OpenFile("/sys/bus/pci/rescan", os.O_WRONLY, 0)
+func resetDevice(arg string) error {
+	dev, err := parseDevice(arg)
 	if err != nil {
 		return err
 	}
-	if _, err = rescan.Write([]byte{'1'}); err != nil {
-		rescan.Close()
+	if err = removeDevice(dev); err != nil {
 		return err
 	}
-	return rescan.Close()
+	return rescan()
 }
 
 func isEndpoint(addr string) (bool, error) {
@@ -505,14 +519,21 @@ func (r *resetCmd) Execute(_ context.Context, f *flag.FlagSet, _ ...interface{})
 		fmt.Fprintf(os.Stderr, "%s", r.Usage())
 		return subcommands.ExitSuccess
 	}
-	group, err := iommuGroup(f.Args()[0])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return subcommands.ExitFailure
-	}
-	if err = resetGroup(group); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return subcommands.ExitFailure
+	if r.group {
+		group, err := iommuGroup(f.Args()[0])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return subcommands.ExitFailure
+		}
+		if err = resetGroup(group); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return subcommands.ExitFailure
+		}
+	} else {
+		if err := resetDevice(f.Args()[0]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return subcommands.ExitFailure
+		}
 	}
 	return subcommands.ExitSuccess
 }
