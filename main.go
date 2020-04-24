@@ -238,34 +238,30 @@ func isEndpoint(addr string) (bool, error) {
 	return headerType[0]&0x7f == 0, config.Close()
 }
 
+func readString(path string) (string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	if err != nil {
+		return "", err
+	}
+
+	str, err := bufio.NewReader(f).ReadString('\n')
+	if err != nil {
+		f.Close()
+		return "", err
+	}
+	return strings.TrimSpace(str), f.Close()
+}
+
 func newPCIDevice(addr string) (*pciDevice, error) {
+	var err error
 	ret := &pciDevice{addr: addr}
-	vendor, err := os.OpenFile("/sys/bus/pci/devices/"+addr+"/vendor", os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
-	}
 
-	ret.vendor, err = bufio.NewReader(vendor).ReadString('\n')
-	if err != nil {
-		vendor.Close()
-		return nil, err
-	}
-	ret.vendor = strings.TrimSpace(ret.vendor)
-	if err = vendor.Close(); err != nil {
-		return nil, err
-	}
-
-	id, err := os.OpenFile("/sys/bus/pci/devices/"+addr+"/device", os.O_RDONLY, 0)
+	ret.vendor, err = readString("/sys/bus/pci/devices/"+addr+"/vendor")
 	if err != nil {
 		return nil, err
 	}
-	ret.id, err = bufio.NewReader(id).ReadString('\n')
+	ret.id, err = readString("/sys/bus/pci/devices/"+addr+"/device")
 	if err != nil {
-		id.Close()
-		return nil, err
-	}
-	ret.id = strings.TrimSpace(ret.id)
-	if err = id.Close(); err != nil {
 		return nil, err
 	}
 
@@ -423,11 +419,68 @@ func devFromInterface(ifc string) (*pciDevice, error) {
 	return devFromAddr(p[len(p)-1])
 }
 
-func devFromID(id string) (*pciDevice, error) {
-	return nil, nil
+var vidRE = regexp.MustCompile(`^(?:0x)?([0-9a-f]{4}):(?:0x)?([0-9a-f]{4})$`)
+
+func devFromID(vid string) (*pciDevice, error) {
+	s := vidRE.FindStringSubmatch(vid)
+	if s == nil {
+		return nil, nil
+	}
+	vendor, err := strconv.ParseUint(s[1], 16, 16)
+	if err != nil {
+		return nil, err
+	}
+	device, err := strconv.ParseUint(s[2], 16, 16)
+	if err != nil {
+		return nil, err
+	}
+
+	devs, err := os.Open("/sys/bus/pci/devices")
+	if err != nil {
+		return nil, err
+	}
+	dents, err := devs.Readdir(-1)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range dents {
+		v, err := readString("/sys/bus/pci/devices/" + d.Name() + "/vendor")
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		vd, err := strconv.ParseUint(v, 0, 16)
+		if err != nil {
+			return nil, err
+		}
+		if vd != vendor {
+			continue
+		}
+		dev, err := readString("/sys/bus/pci/devices/" + d.Name() + "/device")
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		dv, err := strconv.ParseUint(dev, 0, 16)
+		if err != nil {
+			return nil, err
+		}
+		if dv != device {
+			continue
+		}
+		ret := &pciDevice{addr: d.Name(), vendor: v, id: dev}
+		if err = devRecordDriver(ret); err != nil {
+			return nil, err
+		}
+		ret.originalDriver = ret.driver
+		return ret, nil
+	}
+	return nil, fmt.Errorf("vendor/device pair %s not found", vid)
 }
 
-var addrRE = regexp.MustCompile(`([0-9a-fA-F]{4}):([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.([0-7])`)
+var addrRE = regexp.MustCompile(`^([0-9a-fA-F]{4}):([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.([0-7])$`)
 
 func devFromAddr(addr string) (*pciDevice, error) {
 	s := addrRE.FindStringSubmatch(addr)
@@ -436,7 +489,7 @@ func devFromAddr(addr string) (*pciDevice, error) {
 	}
 
 	device := s[3]
-	id, err := strconv.ParseInt(device, 16, 8)
+	id, err := strconv.ParseUint(device, 16, 8)
 	if err != nil {
 		return nil, err
 	}
