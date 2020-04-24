@@ -107,7 +107,10 @@ func unbindDev(dev *pciDevice) error {
 		unbind.Close()
 		return err
 	}
-	return unbind.Close()
+	if err = unbind.Close(); err != nil {
+		return err
+	}
+	return devRecordDriver(dev)
 }
 
 func vfioBindDevice(dev *pciDevice) error {
