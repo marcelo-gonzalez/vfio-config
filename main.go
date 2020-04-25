@@ -463,6 +463,9 @@ func devsFromID(vid string) ([]*pciDevice, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err = devs.Close(); err != nil {
+		return nil, err
+	}
 	var ret []*pciDevice
 	for _, d := range dents {
 		v, err := readString("/sys/bus/pci/devices/" + d.Name() + "/vendor")
